@@ -6,14 +6,8 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import rlp
 from eth_account import Account
 from eth_account._utils.legacy_transactions import (
-    Transaction,
-    encode_transaction,
-    serializable_unsigned_transaction_from_dict,
-)
-from eth_account._utils.typed_transactions import (
-    AccessListTransaction,
-    DynamicFeeTransaction,
-)
+    Transaction, encode_transaction,
+    serializable_unsigned_transaction_from_dict)
 from eth_typing import HexStr
 from hexbytes import HexBytes
 from toolz import dissoc
@@ -23,17 +17,21 @@ from web3.method import Method
 from web3.module import Module
 from web3.types import Nonce, RPCEndpoint, TxParams
 
-from .types import (
-    FlashbotsBundleDictTx,
-    FlashbotsBundleRawTx,
-    FlashbotsBundleTx,
-    FlashbotsOpts,
-    SignedTxAndHash,
-    TxReceipt,
-)
+from .types import (FlashbotsBundleDictTx, FlashbotsBundleRawTx,
+                    FlashbotsBundleTx, FlashbotsOpts, SignedTxAndHash,
+                    TxReceipt)
 
 SECONDS_PER_BLOCK = 12
 
+def get_transaction_type(tx: Dict[str, Any]) -> str:
+    tx_type = tx.get("type", "0x0")
+    if tx_type in ("0x0", 0, None):
+        return "legacy"
+    elif tx_type in ("0x1", 1):
+        return "access_list"
+    elif tx_type in ("0x2", 2):
+        return "eip1559"
+    return "unknown"
 
 class FlashbotsRPC:
     eth_sendBundle = RPCEndpoint("eth_sendBundle")
@@ -156,7 +154,7 @@ class Flashbots(Module):
                     tx["gas"] = self.w3.eth.estimate_gas(tx)
 
                 signed_tx = signer.sign_transaction(tx)
-                signed_transactions.append(signed_tx.rawTransaction)
+                signed_transactions.append(signed_tx.raw_transaction)
 
             elif all(key in tx for key in ["v", "r", "s"]):  # FlashbotsBundleDictTx
                 v, r, s = (
@@ -198,12 +196,6 @@ class Flashbots(Module):
 
         return signed_transactions
 
-    def to_hex(self, signed_transaction: bytes) -> str:
-        tx_hex = signed_transaction.hex()
-        if tx_hex[0:2] != "0x":
-            tx_hex = f"0x{tx_hex}"
-        return tx_hex
-
     def send_raw_bundle_munger(
         self,
         signed_bundled_transactions: List[HexBytes],
@@ -218,7 +210,7 @@ class Flashbots(Module):
         # convert to hex
         return [
             {
-                "txs": list(map(lambda x: self.to_hex(x), signed_bundled_transactions)),
+                "txs": list(map(lambda x: x.to_0x_hex(), signed_bundled_transactions)),
                 "blockNumber": hex(target_block_number),
                 "minTimestamp": opts["minTimestamp"] if "minTimestamp" in opts else 0,
                 "maxTimestamp": opts["maxTimestamp"] if "maxTimestamp" in opts else 0,
@@ -295,11 +287,11 @@ class Flashbots(Module):
         )
 
         # sets evm params
-        evm_block_number = self.w3.to_hex(block_number)
+        evm_block_number = block_number.to_0x_hex()
         evm_block_state_number = (
-            self.w3.to_hex(state_block_tag)
+            state_block_tag.to_0x_hex()
             if state_block_tag is not None
-            else self.w3.to_hex(block_number - 1)
+            else (block_number - 1).to_0x_hex()
         )
         evm_timestamp = (
             block_timestamp
@@ -348,7 +340,7 @@ class Flashbots(Module):
         """Given a raw signed bundle, it packages it up with the block number and the timestamps"""
         inpt = [
             {
-                "txs": list(map(lambda x: x.hex(), signed_bundled_transactions)),
+                "txs": list(map(lambda x: x.to_0x_hex(), signed_bundled_transactions)),
                 "blockNumber": evm_block_number,
                 "stateBlockNumber": evm_block_state_number,
                 "timestamp": evm_timestamp,
@@ -421,7 +413,7 @@ class Flashbots(Module):
             current_block = self.w3.eth.block_number
             max_block_number = current_block + 25
         params = {
-            "tx": self.to_hex(signed_transaction),
+            "tx": signed_transaction.to_0x_hex(),
             "maxBlockNumber": max_block_number,
         }
         self.response = FlashbotsPrivateTransactionResponse(
@@ -463,24 +455,51 @@ class Flashbots(Module):
 
 
 def _parse_signed_tx(signed_tx: HexBytes) -> TxParams:
-    # decode tx params based on its type
+    """
+    Parse any signed Ethereum transaction (legacy, EIP-2930, EIP-1559).
+    """
     tx_type = signed_tx[0]
-    if tx_type > int("0x7f", 16):
-        # legacy and EIP-155 transactions
-        decoded_tx = rlp.decode(signed_tx, Transaction).as_dict()
-    else:
-        # typed transactions (EIP-2718)
-        if tx_type == 1:
-            # EIP-2930
-            sedes = AccessListTransaction._signed_transaction_serializer
-        elif tx_type == 2:
-            # EIP-1559
-            sedes = DynamicFeeTransaction._signed_transaction_serializer
-        else:
-            raise ValueError(f"Unknown transaction type: {tx_type}.")
-        decoded_tx = rlp.decode(signed_tx[1:], sedes).as_dict()
 
-    # recover sender address and remove signature fields
+    if tx_type > 0x7f:
+        # Legacy transaction
+        decoded_tx = rlp.decode(signed_tx, Transaction).as_dict()
+        # If transaction was signed EIP-155, extract chainId from v
+        if "chainId" not in decoded_tx:
+            v = decoded_tx.get("v", 0)
+            if v > 28:
+                # EIP-155: chainId = (v - 35) // 2
+                decoded_tx["chainId"] = (v - 35) // 2
+        # Some RLP impls use 'chain_id' key
+        if "chainId" not in decoded_tx and "chain_id" in decoded_tx:
+            decoded_tx["chainId"] = decoded_tx.pop("chain_id")
+    else:
+        # Typed transaction: skip the type byte and decode the RLP payload
+        payload = signed_tx[1:]
+        tx_data = rlp.decode(payload)
+        if tx_type == 1:
+            # EIP-2930 Access List transaction
+            keys = [
+                "chainId", "nonce", "gasPrice", "gas", "to", "value", "data",
+                "accessList", "v", "r", "s"
+            ]
+        elif tx_type == 2:
+            # EIP-1559 Dynamic Fee transaction
+            keys = [
+                "chainId", "nonce", "maxPriorityFeePerGas", "maxFeePerGas",
+                "gas", "to", "value", "data", "accessList", "v", "r", "s"
+            ]
+        else:
+            raise ValueError(f"Unsupported transaction type {tx_type}")
+        decoded_tx = dict(zip(keys, tx_data))
+
+    # Automatically convert byte fields to int for numeric fields
+    for field in ("chainId", "nonce", "gas", "value", "maxFeePerGas", "maxPriorityFeePerGas"):
+        if field in decoded_tx and isinstance(decoded_tx[field], (bytes, HexBytes)):
+            decoded_tx[field] = int.from_bytes(decoded_tx[field], byteorder="big")
+
+    # Add the 'from' field by recovering the sender address
+    # Note: Account.recover_transaction handles both legacy and typed transactions
     decoded_tx["from"] = Account.recover_transaction(signed_tx)
     decoded_tx = dissoc(decoded_tx, "v", "r", "s")
     return decoded_tx
+
