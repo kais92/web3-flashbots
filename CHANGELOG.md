@@ -25,4 +25,5 @@
 - Replaced lambda functions with list comprehensions for better readability.
 - Improved error handling in `FlashbotProvider` with specific exception types for timeouts and connection errors.
 - Added return type hints to `simulate()` and `extrapolate_timestamp()` methods.
+- Migrated from Poetry to uv for package management (PEP 621 compliant `pyproject.toml`).
 
