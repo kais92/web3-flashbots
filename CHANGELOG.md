@@ -11,6 +11,7 @@
 ### Added
 - Official compatibility with Web3.py v7 (7.x series).
 - Expanded tests covering `_parse_signed_tx` for legacy, EIP-2930 (type=1), and EIP-1559 (type=2) transactions.
+- Configurable `request_timeout` parameter for `FlashbotProvider` (default: 10 seconds).
 
 ### Fixed
 - Ensured numeric RLP fields (bytes) are converted to `int`.

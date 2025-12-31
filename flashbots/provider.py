@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from typing import Any, Dict, Optional, Union
@@ -50,6 +49,7 @@ class FlashbotProvider(HTTPProvider):
         endpoint_uri: Optional[Union[URI, str]] = None,
         request_kwargs: Optional[Dict[str, Any]] = None,
         session: Optional[Any] = None,
+        request_timeout: int = 10,
     ):
         """
         Initialize the FlashbotProvider.
@@ -58,11 +58,12 @@ class FlashbotProvider(HTTPProvider):
         :param endpoint_uri: The URI of the Flashbots endpoint.
         :param request_kwargs: Additional keyword arguments for requests.
         :param session: The session object to use for requests.
+        :param request_timeout: Timeout in seconds for HTTP requests (default: 10).
         """
-                
         if isinstance(signature_account, str):
             signature_account = Account.from_key(signature_account)
         self.signature_account = signature_account
+        self.request_timeout = request_timeout
 
         _endpoint_uri = endpoint_uri or get_default_endpoint()
         super().__init__(_endpoint_uri, request_kwargs, session)
@@ -98,7 +99,7 @@ class FlashbotProvider(HTTPProvider):
                 data=request_data,
                 headers=self.get_request_headers()
                     | self._get_flashbots_headers(request_data),
-                timeout=10
+                timeout=self.request_timeout
             )
             response = self.decode_rpc_response(raw_response)
             self.logger.debug(
