@@ -1,6 +1,5 @@
 import logging
 import time
-from functools import reduce
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import rlp
@@ -17,6 +16,11 @@ from web3.method import Method
 from web3.module import Module
 from web3.types import Nonce, RPCEndpoint, TxParams
 
+from .exceptions import (
+    BlockExtrapolationError,
+    InvalidTransactionError,
+    TransactionSignatureError,
+)
 from .types import (FlashbotsBundleDictTx, FlashbotsBundleRawTx,
                     FlashbotsBundleTx, FlashbotsOpts, SignedTxAndHash,
                     TxReceipt)
@@ -43,14 +47,9 @@ class FlashbotsBundleResponse:
 
     def __init__(self, w3: Web3, txs: List[HexBytes], target_block_number: int):
         self.w3 = w3
-
-        def parse_tx(tx):
-            return {
-                "signed_transaction": tx,
-                "hash": self.w3.keccak(tx),
-            }
-
-        self.bundle = list(map(parse_tx, txs))
+        self.bundle = [
+            {"signed_transaction": tx, "hash": self.w3.keccak(tx)} for tx in txs
+        ]
         self.target_block_number = target_block_number
 
     def wait(self) -> None:
@@ -61,16 +60,13 @@ class FlashbotsBundleResponse:
     def receipts(self) -> List[TxReceipt]:
         """Returns all the transaction receipts from the submitted bundle"""
         self.wait()
-        return list(
-            map(lambda tx: self.w3.eth.get_transaction_receipt(tx["hash"]), self.bundle)
-        )
+        return [
+            self.w3.eth.get_transaction_receipt(tx["hash"]) for tx in self.bundle
+        ]
 
-    def bundle_hash(self) -> str:
+    def bundle_hash(self) -> HexBytes:
         """Calculates bundle hash"""
-        concat_hashes = reduce(
-            lambda a, b: a + b,
-            map(lambda tx: tx["hash"], self.bundle),
-        )
+        concat_hashes = b"".join(tx["hash"] for tx in self.bundle)
         return self.w3.keccak(concat_hashes)
 
 
@@ -162,13 +158,19 @@ class Flashbots(Module):
                 }
 
                 if "maxFeePerGas" in tx or "maxPriorityFeePerGas" in tx:
-                    assert "maxFeePerGas" in tx and "maxPriorityFeePerGas" in tx
+                    if "maxFeePerGas" not in tx or "maxPriorityFeePerGas" not in tx:
+                        raise InvalidTransactionError(
+                            "EIP-1559 transactions require both maxFeePerGas and maxPriorityFeePerGas"
+                        )
                     tx_dict["maxFeePerGas"], tx_dict["maxPriorityFeePerGas"] = (
                         tx["maxFeePerGas"],
                         tx["maxPriorityFeePerGas"],
                     )
                 else:
-                    assert "gasPrice" in tx
+                    if "gasPrice" not in tx:
+                        raise InvalidTransactionError(
+                            "Legacy transactions require gasPrice"
+                        )
                     tx_dict["gasPrice"] = tx["gasPrice"]
 
                 if tx.get("accessList"):
@@ -182,7 +184,11 @@ class Flashbots(Module):
 
                 unsigned_tx = serializable_unsigned_transaction_from_dict(tx_dict)
                 raw = encode_transaction(unsigned_tx, vrs=(v, r, s))
-                assert self.w3.keccak(raw) == tx["hash"]
+                if self.w3.keccak(raw) != tx["hash"]:
+                    raise TransactionSignatureError(
+                        f"Transaction hash mismatch: expected {tx['hash'].hex()}, "
+                        f"got {self.w3.keccak(raw).hex()}"
+                    )
                 signed_transactions.append(raw)
 
         return signed_transactions
@@ -201,7 +207,7 @@ class Flashbots(Module):
         # convert to hex
         return [
             {
-                "txs": list(map(lambda x: x.to_0x_hex(), signed_bundled_transactions)),
+                "txs": [tx.to_0x_hex() for tx in signed_bundled_transactions],
                 "blockNumber": hex(target_block_number),
                 "minTimestamp": opts["minTimestamp"] if "minTimestamp" in opts else 0,
                 "maxTimestamp": opts["maxTimestamp"] if "maxTimestamp" in opts else 0,
@@ -269,7 +275,7 @@ class Flashbots(Module):
         block_tag: Union[int, str] = None,
         state_block_tag: int = None,
         block_timestamp: int = None,
-    ):
+    ) -> Dict[str, Any]:
         # interpret block number from tag
         block_number = (
             self.w3.eth.block_number
@@ -310,15 +316,16 @@ class Flashbots(Module):
             "coinbaseDiff": call_result["coinbaseDiff"],
             "results": call_result["results"],
             "signedBundledTransactions": signed_bundled_transactions,
-            "totalGasUsed": reduce(
-                lambda a, b: a + b["gasUsed"], call_result["results"], 0
-            ),
+            "totalGasUsed": sum(r["gasUsed"] for r in call_result["results"]),
         }
 
-    def extrapolate_timestamp(self, block_tag: int, latest_block_number: int):
+    def extrapolate_timestamp(self, block_tag: int, latest_block_number: int) -> int:
         block_delta = block_tag - latest_block_number
         if block_delta < 0:
-            raise Exception("block extrapolation negative")
+            raise BlockExtrapolationError(
+                f"Cannot extrapolate timestamp for past block: "
+                f"target={block_tag}, latest={latest_block_number}"
+            )
         return self.w3.eth.get_block(latest_block_number)["timestamp"] + (
             block_delta * SECONDS_PER_BLOCK
         )
@@ -334,15 +341,14 @@ class Flashbots(Module):
         opts: Optional[FlashbotsOpts] = None,
     ) -> Any:
         """Given a raw signed bundle, it packages it up with the block number and the timestamps"""
-        inpt = [
+        return [
             {
-                "txs": list(map(lambda x: x.to_0x_hex(), signed_bundled_transactions)),
+                "txs": [tx.to_0x_hex() for tx in signed_bundled_transactions],
                 "blockNumber": evm_block_number,
                 "stateBlockNumber": evm_block_state_number,
                 "timestamp": evm_timestamp,
             }
         ]
-        return inpt
 
     call_bundle: Method[Callable[[Any], Any]] = Method(
         json_rpc_method=FlashbotsRPC.eth_callBundle, mungers=[call_bundle_munger]
