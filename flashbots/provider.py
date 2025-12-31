@@ -9,7 +9,7 @@ from eth_typing import URI
 from web3 import HTTPProvider, Web3
 from web3.types import RPCEndpoint, RPCResponse
 
-logger = logging.getLogger(__name__)
+from .exceptions import FlashbotsRequestError
 
 
 def get_default_endpoint() -> URI:
@@ -105,7 +105,13 @@ class FlashbotProvider(HTTPProvider):
             self.logger.debug(
                 f"Getting response HTTP. URI: {self.endpoint_uri}, Method: {method}, Response: {response}"
             )
-            return response 
-        except Exception as e:
-            logger.exception("FlashbotProvider request failed")
-            raise e
+            return response
+        except requests.Timeout as e:
+            self.logger.error(f"Request to {method} timed out after {self.request_timeout}s")
+            raise FlashbotsRequestError(f"Request timed out: {method}") from e
+        except requests.ConnectionError as e:
+            self.logger.error(f"Connection error for {method}: {e}")
+            raise FlashbotsRequestError(f"Connection failed: {method}") from e
+        except requests.RequestException as e:
+            self.logger.error(f"Request failed for {method}: {e}")
+            raise FlashbotsRequestError(f"Request failed: {method}") from e
