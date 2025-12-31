@@ -498,7 +498,7 @@ def _parse_signed_tx(signed_tx: HexBytes) -> TxParams:
         decoded_tx = dict(zip(keys, tx_data))
 
     # Automatically convert byte fields to int for numeric fields
-    for field in ("chainId", "nonce", "gas", "value", "maxFeePerGas", "maxPriorityFeePerGas"):
+    for field in ("chainId", "nonce", "gas", "gasPrice", "value", "maxFeePerGas", "maxPriorityFeePerGas"):
         if field in decoded_tx and isinstance(decoded_tx[field], (bytes, HexBytes)):
             decoded_tx[field] = int.from_bytes(decoded_tx[field], byteorder="big")
 

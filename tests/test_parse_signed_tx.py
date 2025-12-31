@@ -1,6 +1,5 @@
 # tests/test_parse_signed_tx.py
 
-import pytest
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
@@ -69,8 +68,7 @@ def test_parse_access_list_signed_tx():
     assert decoded["nonce"] == tx["nonce"]
     assert decoded["gas"] == tx["gas"]
     assert decoded["value"] == tx["value"]
-    # gasPrice remains bytes, so convert for comparison
-    assert int.from_bytes(decoded["gasPrice"], "big") == tx["gasPrice"]
+    assert decoded["gasPrice"] == tx["gasPrice"]
 
     # Access list round-trips correctly
     assert decoded["accessList"] == tx["accessList"]
