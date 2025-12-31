@@ -10,7 +10,6 @@
 
 ### Added
 - Official compatibility with Web3.py v7 (7.x series).
-- New helper `get_transaction_type()` to detect legacy, access list, and EIP-1559 tx types.
 - Expanded tests covering `_parse_signed_tx` for legacy, EIP-2930 (type=1), and EIP-1559 (type=2) transactions.
 
 ### Fixed

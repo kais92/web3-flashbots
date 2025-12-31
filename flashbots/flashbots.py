@@ -23,15 +23,6 @@ from .types import (FlashbotsBundleDictTx, FlashbotsBundleRawTx,
 
 SECONDS_PER_BLOCK = 12
 
-def get_transaction_type(tx: Dict[str, Any]) -> str:
-    tx_type = tx.get("type", "0x0")
-    if tx_type in ("0x0", 0, None):
-        return "legacy"
-    elif tx_type in ("0x1", 1):
-        return "access_list"
-    elif tx_type in ("0x2", 2):
-        return "eip1559"
-    return "unknown"
 
 class FlashbotsRPC:
     eth_sendBundle = RPCEndpoint("eth_sendBundle")
