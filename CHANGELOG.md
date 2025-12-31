@@ -12,9 +12,17 @@
 - Official compatibility with Web3.py v7 (7.x series).
 - Expanded tests covering `_parse_signed_tx` for legacy, EIP-2930 (type=1), and EIP-1559 (type=2) transactions.
 - Configurable `request_timeout` parameter for `FlashbotProvider` (default: 10 seconds).
+- Custom exception hierarchy: `FlashbotsError`, `InvalidTransactionError`, `TransactionSignatureError`, `BlockExtrapolationError`, `FlashbotsRequestError`.
+- Explicit `__all__` exports in package `__init__.py`.
 
 ### Fixed
 - Ensured numeric RLP fields (bytes) are converted to `int`.
 - Added recovery of `chainId` for legacy transactions signed under EIP-155.
 - Updated examples (`examples/simple.py`) to use `.raw_transaction` and new middleware/provider APIs.
+
+### Changed
+- Replaced `assert` statements with explicit validation raising domain-specific exceptions.
+- Replaced lambda functions with list comprehensions for better readability.
+- Improved error handling in `FlashbotProvider` with specific exception types for timeouts and connection errors.
+- Added return type hints to `simulate()` and `extrapolate_timestamp()` methods.
 
