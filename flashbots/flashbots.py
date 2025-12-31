@@ -286,12 +286,17 @@ class Flashbots(Module):
             else block_tag
         )
 
+        def _to_hex_block_tag(value: Union[int, str]) -> str:
+            if isinstance(value, int):
+                return hex(value)
+            return value
+
         # sets evm params
-        evm_block_number = block_number.to_0x_hex()
+        evm_block_number = _to_hex_block_tag(block_number)
         evm_block_state_number = (
-            state_block_tag.to_0x_hex()
+            _to_hex_block_tag(state_block_tag)
             if state_block_tag is not None
-            else (block_number - 1).to_0x_hex()
+            else _to_hex_block_tag(block_number - 1)
         )
         evm_timestamp = (
             block_timestamp
@@ -406,7 +411,7 @@ class Flashbots(Module):
             signed_transaction = (
                 transaction["signer"]
                 .sign_transaction(transaction["transaction"])
-                .rawTransaction
+                .raw_transaction
             )
         if max_block_number is None:
             # get current block num, add 25
@@ -502,4 +507,3 @@ def _parse_signed_tx(signed_tx: HexBytes) -> TxParams:
     decoded_tx["from"] = Account.recover_transaction(signed_tx)
     decoded_tx = dissoc(decoded_tx, "v", "r", "s")
     return decoded_tx
-
